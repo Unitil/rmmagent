@@ -1,52 +1,26 @@
-env:
-  - CGO_ENABLED=0
+before:
+  hooks:
+    # You may remove this if you don't use go modules.
+    - go mod tidy
 builds:
-  - id: rmmagent-linux
-    goos:
-      - linux
-    goarch:
-      - "386"
-      - amd64
-      - arm
-      - arm64
-    ldflags: -s -w
-  - id: rmmagent-windows
-    goos:
-      - windows
-    goarch:
-      - "386"
-      - amd64
-      - arm
-      - arm64
-    ldflags: -s -w
-  - id: rmmagent-darwin
-    goos:
-      - darwin
-    goarch:
-      - amd64
-      - arm64
-    ldflags: -s -w
+  -
+    id: linux
+    binary: rmmagent
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+    targets:
+      - linux_386
+      - linux_amd64
+      - linux_arm64
+      - linux_arm_5
+      - linux_arm_6
+      - linux_arm_7
+      - windows_386
+      - windows_amd64
 archives:
-  - format: tar.gz
-    # this name template makes the OS and Arch compatible with the results of uname.
-    name_template: >-
-      {{ .ProjectName }}_
-      {{- title .Os }}_
-      {{- if eq .Arch "amd64" }}x86_64
-      {{- else if eq .Arch "386" }}i386
-      {{- else }}{{ .Arch }}{{ end }}
-      {{- if .Arm }}v{{ .Arm }}{{ end }}
-    # use zip for windows archives
-    format_overrides:
-    - goos: windows
-      format: zip
+  - format: binary
+    name_template: '{{ .Binary }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}{{ with .Mips }}-{{ . }}{{ end }}'
 checksum:
   name_template: checksums.txt
-snapshot:
-  name_template: "{{ incpatch .Version }}-next"
-changelog:
-  sort: asc
-  filters:
-    exclude:
-      - '^docs:'
-      - '^test:'
