@@ -207,7 +207,7 @@ InstallMesh() {
     mkdir -p ${meshDir}
     env LC_ALL=en_US.UTF-8 LANGUAGE=en_US XAUTHORITY=foo DISPLAY=bar ${meshTmpBin} -install --installPath=${meshDir}
     sleep 1
-    #rm -rf ${meshTmpDir}
+    rm -rf ${meshTmpDir}
 }
 
 RemoveMesh() {
