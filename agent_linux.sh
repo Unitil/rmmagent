@@ -12,13 +12,6 @@ if [ "${HAS_SYSTEMD}" != 'systemd' ]; then
     exit 1
 fi
 
-if [[ $DISPLAY ]]; then
-    echo "ERROR: Display detected. Installer only supports running headless, i.e from ssh."
-    echo "If you cannot ssh in then please run 'sudo systemctl isolate multi-user.target' to switch to a non-graphical user session and run the installer again."
-    exit 1
-fi
-
-
 #############################################################
 # Variables
 #############################################################
@@ -380,7 +373,7 @@ DownloadMeshAgent() {
 
     # TODO: We could check the meshagent sha256 hash, but best to authenticate the server.
     chmod 755 ${meshTmpBin}
-    meshTmpMsh="${meshTmpDir}/tacticalagent.msh"
+    meshTmpMsh="${meshTmpDir}/meshagent.msh"
     wget $url/meshsettings?id=$meshid -O ${meshTmpMsh} || curl -L --output ${meshTmpMsh} $url/meshsettings?id=$meshid
 
     # If it did not work, try again using http
