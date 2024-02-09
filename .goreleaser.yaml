@@ -25,4 +25,4 @@ archives:
 checksum:
   name_template: checksums.txt
 env_files:
-  github_token: ~/.config/goreleaser/github_token
+  gitea_token: ~/nope
