@@ -24,3 +24,5 @@ archives:
     name_template: '{{ .Binary }}-{{ .Os }}-{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}{{ with .Mips }}-{{ . }}{{ end }}'
 checksum:
   name_template: checksums.txt
+env_files:
+  github_token: ~/.config/goreleaser/github_token
