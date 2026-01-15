@@ -433,11 +433,28 @@ func getCwd() (string, error) {
 	return filepath.Dir(self), nil
 }
 
-func createNixTmpFile(shell ...string) (*os.File, error) {
+func createNixTmpFile(path string, shell ...string) (*os.File, error) {
 	var f *os.File
-	cwd, err := getCwd()
-	if err != nil {
-		return f, err
+
+	if len(path) == 0 {
+		var err error
+		path, err = getCwd()
+		if err != nil {
+			return f, err
+		}
+	}
+
+	// check if path exists
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			// create the path
+			err := os.MkdirAll(path, 0755)
+			if err != nil {
+				return f, err
+			}
+		} else {
+			return f, err
+		}
 	}
 
 	ext := ""
@@ -445,7 +462,7 @@ func createNixTmpFile(shell ...string) (*os.File, error) {
 		ext = ".ts"
 	}
 
-	f, err = os.CreateTemp(cwd, fmt.Sprintf("trmm*%s", ext))
+	f, err := os.CreateTemp(path, fmt.Sprintf("trmm*%s", ext))
 	if err != nil {
 		return f, err
 	}

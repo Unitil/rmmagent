@@ -73,11 +73,6 @@ func (a *Agent) CreateSchedTask(st SchedTask) (bool, error) {
 
 	var now = time.Now()
 	switch st.Trigger {
-	case "manual":
-		tasktrigger = taskmaster.TaskTrigger{
-			Enabled:       st.Enabled,
-			StartBoundary: now,
-		}
 	case "onboarding":
 		tasktrigger = taskmaster.TaskTrigger{
 			Enabled: st.Enabled,
@@ -145,14 +140,11 @@ func (a *Agent) CreateSchedTask(st SchedTask) (bool, error) {
 			WeeksOfMonth: st.WeeksOfMonth,
 			RandomDelay:  st.RandomDelay,
 		}
-
-	case "manual":
-		trigger = taskmaster.TimeTrigger{
-			TaskTrigger: tasktrigger,
-		}
 	}
 
-	def.AddTrigger(trigger)
+	if st.Trigger != "manual" {
+		def.AddTrigger(trigger)
+	}
 
 	switch st.Type {
 	case "rmm":

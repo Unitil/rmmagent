@@ -12,11 +12,13 @@ https://license.tacticalrmm.com
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,7 +38,9 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/gonutz/w32/v2"
 	"github.com/kardianos/service"
+	nats "github.com/nats-io/nats.go"
 	"github.com/shirou/gopsutil/v3/disk"
+	"github.com/ugorji/go/codec"
 	wapf "github.com/wh1te909/go-win64api"
 	trmm "github.com/wh1te909/trmm-shared"
 	"golang.org/x/sys/windows"
@@ -328,12 +332,14 @@ func CMD(exe string, args []string, timeout int, detached bool) (output [2]strin
 	return [2]string{CleanString(outb.String()), CleanString(errb.String())}, nil
 }
 
-func CMDShell(shell string, cmdArgs []string, command string, timeout int, detached bool, runasuser bool) (output [2]string, e error) {
+func CMDShell(shell string, cmdArgs []string, command string, timeout int, detached bool, runasuser bool, stream bool, agentID *string, cmdID *string, nc *nats.Conn) (output [2]string, e error) {
 	var (
-		outb     bytes.Buffer
-		errb     bytes.Buffer
-		cmd      *exec.Cmd
-		timedOut = false
+		outb         bytes.Buffer
+		errb         bytes.Buffer
+		cmd          *exec.Cmd
+		timedOut     = false
+		stdoutWriter io.Closer
+		stderrWriter io.Closer
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
@@ -378,9 +384,32 @@ func CMDShell(shell string, cmdArgs []string, command string, timeout int, detac
 	}
 
 	cmd.SysProcAttr = sysProcAttr
-	cmd.Stdout = &outb
-	cmd.Stderr = &errb
-	cmd.Start()
+
+	if stream {
+		stdoutReader, sw := io.Pipe()
+		stderrReader, ew := io.Pipe()
+		stdoutWriter = sw
+		stderrWriter = ew
+
+		cmd.Stdout = io.MultiWriter(&outb, sw)
+		cmd.Stderr = io.MultiWriter(&errb, ew)
+
+		go streamLines(stdoutReader, *agentID, *cmdID, nc)
+		go streamLines(stderrReader, *agentID, *cmdID, nc)
+	} else {
+		cmd.Stdout = &outb
+		cmd.Stderr = &errb
+	}
+	if err := cmd.Start(); err != nil {
+		// If streaming, close the writers to unblock the goroutines
+		if stdoutWriter != nil {
+			stdoutWriter.Close()
+		}
+		if stderrWriter != nil {
+			stderrWriter.Close()
+		}
+		return [2]string{CleanString(outb.String()), CleanString(errb.String())}, err
+	}
 
 	pid := int32(cmd.Process.Pid)
 
@@ -394,6 +423,15 @@ func CMDShell(shell string, cmdArgs []string, command string, timeout int, detac
 
 	err := cmd.Wait()
 
+	// This sends an EOF to the reader ends of the pipes, which allows
+	// the bufio.Scanner in streamLines to finish and the goroutines to exit.
+	if stdoutWriter != nil {
+		stdoutWriter.Close()
+	}
+	if stderrWriter != nil {
+		stderrWriter.Close()
+	}
+
 	if timedOut {
 		return [2]string{CleanString(outb.String()), CleanString(errb.String())}, ctx.Err()
 	}
@@ -403,6 +441,27 @@ func CMDShell(shell string, cmdArgs []string, command string, timeout int, detac
 	}
 
 	return [2]string{CleanString(outb.String()), CleanString(errb.String())}, nil
+}
+
+func streamLines(pipe io.ReadCloser, agentID string, cmdID string, nc *nats.Conn) {
+	scanner := bufio.NewScanner(pipe)
+	subject := agentID + ".cmdoutput." + cmdID
+	for scanner.Scan() {
+		line := scanner.Text()
+		var resp []byte
+		ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+		_ = ret.Encode(CleanString(line))
+		_ = nc.Publish(subject, resp)
+	}
+	// Send final 'done' message
+	finalPayload := map[string]interface{}{
+		"done":      true,
+		"exit_code": 0,
+	}
+	var finalResp []byte
+	ret := codec.NewEncoderBytes(&finalResp, new(codec.MsgpackHandle))
+	_ = ret.Encode(finalPayload)
+	_ = nc.Publish(subject, finalResp)
 }
 
 // GetDisks returns a list of fixed disks
@@ -558,7 +617,7 @@ func (a *Agent) PlatVer() (string, error) {
 func EnablePing() {
 	args := make([]string, 0)
 	cmd := `netsh advfirewall firewall add rule name="ICMP Allow incoming V4 echo request" protocol=icmpv4:8,any dir=in action=allow`
-	_, err := CMDShell("cmd", args, cmd, 10, false, false)
+	_, err := CMDShell("cmd", args, cmd, 10, false, false, false, nil, nil, nil)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -579,7 +638,7 @@ func EnableRDP() {
 
 	args := make([]string, 0)
 	cmd := `netsh advfirewall firewall set rule group="remote desktop" new enable=Yes`
-	_, cerr := CMDShell("cmd", args, cmd, 10, false, false)
+	_, cerr := CMDShell("cmd", args, cmd, 10, false, false, false, nil, nil, nil)
 	if cerr != nil {
 		fmt.Println(cerr)
 	}
@@ -606,15 +665,15 @@ func DisableSleepHibernate() {
 		wg.Add(1)
 		go func(c string) {
 			defer wg.Done()
-			_, _ = CMDShell("cmd", args, fmt.Sprintf("powercfg /set%svalueindex scheme_current sub_buttons lidaction 0", c), 5, false, false)
-			_, _ = CMDShell("cmd", args, fmt.Sprintf("powercfg /x -standby-timeout-%s 0", c), 5, false, false)
-			_, _ = CMDShell("cmd", args, fmt.Sprintf("powercfg /x -hibernate-timeout-%s 0", c), 5, false, false)
-			_, _ = CMDShell("cmd", args, fmt.Sprintf("powercfg /x -disk-timeout-%s 0", c), 5, false, false)
-			_, _ = CMDShell("cmd", args, fmt.Sprintf("powercfg /x -monitor-timeout-%s 0", c), 5, false, false)
+			_, _ = CMDShell("cmd", args, fmt.Sprintf("powercfg /set%svalueindex scheme_current sub_buttons lidaction 0", c), 5, false, false, false, nil, nil, nil)
+			_, _ = CMDShell("cmd", args, fmt.Sprintf("powercfg /x -standby-timeout-%s 0", c), 5, false, false, false, nil, nil, nil)
+			_, _ = CMDShell("cmd", args, fmt.Sprintf("powercfg /x -hibernate-timeout-%s 0", c), 5, false, false, false, nil, nil, nil)
+			_, _ = CMDShell("cmd", args, fmt.Sprintf("powercfg /x -disk-timeout-%s 0", c), 5, false, false, false, nil, nil, nil)
+			_, _ = CMDShell("cmd", args, fmt.Sprintf("powercfg /x -monitor-timeout-%s 0", c), 5, false, false, false, nil, nil, nil)
 		}(i)
 	}
 	wg.Wait()
-	_, _ = CMDShell("cmd", args, "powercfg -S SCHEME_CURRENT", 5, false, false)
+	_, _ = CMDShell("cmd", args, "powercfg -S SCHEME_CURRENT", 5, false, false, false, nil, nil, nil)
 }
 
 // NewCOMObject creates a new COM object for the specifed ProgramID.
@@ -985,11 +1044,11 @@ func (a *Agent) InstallNushell(force bool) {
 		case "windows":
 			switch runtime.GOARCH {
 			case "amd64":
-				// https://github.com/nushell/nushell/releases/download/0.87.0/nu-0.87.0-x86_64-windows-msvc-full.zip
-				assetName = fmt.Sprintf("nu-%s-x86_64-windows-msvc-full.zip", conf.InstallNushellVersion)
+				// https://github.com/nushell/nushell/releases/download/0.106.1/nu-0.106.1-x86_64-pc-windows-msvc.zip
+				assetName = fmt.Sprintf("nu-%s-x86_64-pc-windows-msvc.zip", conf.InstallNushellVersion)
 			case "arm64":
-				// https://github.com/nushell/nushell/releases/download/0.87.0/nu-0.87.0-aarch64-windows-msvc-full.zip
-				assetName = fmt.Sprintf("nu-%s-aarch64-windows-msvc-full.zip", conf.InstallNushellVersion)
+				// https://github.com/nushell/nushell/releases/download/0.106.1/nu-0.106.1-aarch64-pc-windows-msvc.zip
+				assetName = fmt.Sprintf("nu-%s-aarch64-pc-windows-msvc.zip", conf.InstallNushellVersion)
 			default:
 				a.Logger.Debugln("InstallNushell(): Unsupported architecture and OS:", runtime.GOARCH, runtime.GOOS)
 				return

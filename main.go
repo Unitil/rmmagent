@@ -25,7 +25,7 @@ import (
 )
 
 var (
-	version = "2.9.1"
+	version = "2.10.0"
 	log     = logrus.New()
 	logFile *os.File
 )
@@ -49,6 +49,7 @@ func main() {
 	localMesh := flag.String("local-mesh", "", "Path to mesh executable")
 	noMesh := flag.Bool("nomesh", false, "Do not install mesh agent")
 	meshDir := flag.String("meshdir", "", "Path to custom meshcentral dir")
+	tmpDir := flag.String("tmpdir", "", "Path to custom temp dir")
 	meshNodeID := flag.String("meshnodeid", "", "Mesh Node ID")
 	cert := flag.String("cert", "", "Path to domain CA .pem")
 	silent := flag.Bool("silent", false, "Do not popup any message boxes during installation")
@@ -166,6 +167,7 @@ func main() {
 			MeshNodeID:       *meshNodeID,
 			Insecure:         *insecure,
 			NatsStandardPort: *natsport,
+			TmpDir:           *tmpDir,
 		})
 	default:
 		agent.ShowStatus(version)

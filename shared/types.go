@@ -43,6 +43,7 @@ type AgentConfig struct {
 	Proxy              string
 	CustomMeshDir      string
 	WinTmpDir          string
+	UnixTmpDir         string
 	WinRunAsUserTmpDir string
 	NatsProxyPath      string
 	NatsProxyPort      string

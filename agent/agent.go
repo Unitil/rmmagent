@@ -19,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +39,7 @@ import (
 	nats "github.com/nats-io/nats.go"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/sirupsen/logrus"
+	"github.com/ugorji/go/codec"
 	trmm "github.com/wh1te909/trmm-shared"
 )
 
@@ -54,6 +57,7 @@ type Agent struct {
 	EXE                string
 	SystemDrive        string
 	WinTmpDir          string
+	UnixTmpDir         string
 	WinRunAsUserTmpDir string
 	MeshInstaller      string
 	MeshSystemEXE      string
@@ -266,6 +270,7 @@ func New(logger *logrus.Logger, version string) *Agent {
 		SystemDrive:        sd,
 		WinTmpDir:          winTempDir,
 		WinRunAsUserTmpDir: winRunAsUserTmpDir,
+		UnixTmpDir:         ac.UnixTmpDir,
 		MeshInstaller:      "meshagent.exe",
 		MeshSystemEXE:      MeshSysExe,
 		MeshSVC:            meshSvcName,
@@ -309,6 +314,9 @@ type CmdOptions struct {
 	IsExecutable bool
 	Detached     bool
 	EnvVars      []string
+	Stream       bool
+	Nc           *nats.Conn // nats connection
+	CmdID        string
 }
 
 func (a *Agent) NewCMDOpts() *CmdOptions {
@@ -371,6 +379,9 @@ func (a *Agent) CmdV2(c *CmdOptions) CmdStatus {
 				}
 				fmt.Fprintln(&stdoutBuf, line)
 				a.Logger.Debugln(line)
+				if c.Stream {
+					streamLineToNats(line, a.AgentID, c.CmdID, c.Nc)
+				}
 
 			case line, open := <-envCmd.Stderr:
 				if !open {
@@ -379,6 +390,9 @@ func (a *Agent) CmdV2(c *CmdOptions) CmdStatus {
 				}
 				fmt.Fprintln(&stderrBuf, line)
 				a.Logger.Debugln(line)
+				if c.Stream {
+					streamLineToNats(line, a.AgentID, c.CmdID, c.Nc)
+				}
 			}
 		}
 	}()
@@ -427,7 +441,28 @@ func (a *Agent) CmdV2(c *CmdOptions) CmdStatus {
 		Stderr: CleanString(stderrBuf.String()),
 	}
 	a.Logger.Debugf("%+v\n", ret)
+
+	if c.Stream {
+		finalPayload := map[string]interface{}{
+			"done":      true,
+			"exit_code": finalStatus.Exit,
+		}
+		var finalResp []byte
+		retEnc := codec.NewEncoderBytes(&finalResp, new(codec.MsgpackHandle))
+		_ = retEnc.Encode(finalPayload)
+		subject := a.AgentID + ".cmdoutput." + c.CmdID
+		_ = c.Nc.Publish(subject, finalResp)
+	}
+
 	return ret
+}
+
+func streamLineToNats(line string, agentID string, cmdID string, nc *nats.Conn) {
+	var resp []byte
+	ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+	_ = ret.Encode(line)
+	subject := agentID + ".cmdoutput." + cmdID
+	_ = nc.Publish(subject, resp)
 }
 
 func (a *Agent) GetCPULoadAvg() int {
@@ -521,6 +556,33 @@ func (a *Agent) setupNatsOptions() []nats.Option {
 	opts = append(opts, nats.ReconnectBufSize(-1))
 	opts = append(opts, nats.ProxyPath(a.NatsProxyPath))
 	opts = append(opts, nats.ReconnectJitter(500*time.Millisecond, 4*time.Second))
+
+	if a.Proxy != "" {
+		proxyURL, err := url.Parse(a.Proxy)
+		if err != nil {
+			a.Logger.Errorf("setupNatsOptions(): failed to parse proxy URL: %v", err)
+		} else {
+			baseDialer := &net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}
+
+			var dialFn func(network, addr string) (net.Conn, error)
+
+			switch proxyURL.Scheme {
+			case "http", "https":
+				dialFn = newHTTPConnectDialer(proxyURL, baseDialer)
+			default:
+				a.Logger.Errorf("setupNatsOptions(): unsupported proxy scheme: %s", proxyURL.Scheme)
+			}
+
+			if dialFn != nil {
+				cd := &customDialer{dialer: dialFn}
+				opts = append(opts, nats.SetCustomDialer(cd))
+			}
+		}
+	}
+
 	opts = append(opts, nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
 		a.Logger.Debugln("NATS disconnected:", err)
 		a.Logger.Debugf("%+v\n", nc.Statistics)
@@ -710,7 +772,7 @@ func (a *Agent) RunTask(id int) error {
 
 			switch runtime.GOOS {
 			case "windows":
-				out, err := CMDShell(action.Shell, []string{}, action.Command, action.Timeout, false, action.RunAsUser)
+				out, err := CMDShell(action.Shell, []string{}, action.Command, action.Timeout, false, action.RunAsUser, false, nil, nil, nil)
 				if err != nil {
 					a.Logger.Debugln(err)
 				}

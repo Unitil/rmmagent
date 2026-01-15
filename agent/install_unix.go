@@ -33,7 +33,7 @@ func (a *Agent) installerMsg(msg, alert string, silent bool) {
 	}
 }
 
-func createAgentConfig(baseurl, agentid, apiurl, token, agentpk, cert, proxy, meshdir, natsport string, insecure bool) {
+func createAgentConfig(baseurl, agentid, apiurl, token, agentpk, cert, proxy, meshdir, natsport string, insecure bool, unixtmpdir string) {
 	viper.SetConfigType("json")
 	viper.Set("baseurl", baseurl)
 	viper.Set("agentid", agentid)
@@ -44,6 +44,8 @@ func createAgentConfig(baseurl, agentid, apiurl, token, agentpk, cert, proxy, me
 	viper.Set("proxy", proxy)
 	viper.Set("meshdir", meshdir)
 	viper.Set("natsstandardport", natsport)
+	viper.Set("tmpdir", unixtmpdir)
+
 	if insecure {
 		viper.Set("insecure", "true")
 	}

@@ -21,7 +21,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-func createAgentConfig(baseurl, agentid, apiurl, token, agentpk, cert, proxy, meshdir, natsport string, insecure bool) {
+func createAgentConfig(baseurl, agentid, apiurl, token, agentpk, cert, proxy, meshdir, natsport string, insecure bool, tmpdir string) {
 	k, _, err := registry.CreateKey(registry.LOCAL_MACHINE, `SOFTWARE\TacticalRMM`, registry.ALL_ACCESS)
 	if err != nil {
 		log.Fatalln("Error creating registry key:", err)
@@ -85,6 +85,13 @@ func createAgentConfig(baseurl, agentid, apiurl, token, agentpk, cert, proxy, me
 		err = k.SetStringValue("Insecure", "true")
 		if err != nil {
 			log.Fatalln("Error creating Insecure registry key:", err)
+		}
+	}
+
+	if len(tmpdir) > 0 {
+		err = k.SetStringValue("TmpDir", tmpdir)
+		if err != nil {
+			log.Fatalln("Error creating TmpDir registry key:", err)
 		}
 	}
 }

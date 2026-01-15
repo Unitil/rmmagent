@@ -50,6 +50,7 @@ type Installer struct {
 	MeshNodeID       string
 	Insecure         bool
 	NatsStandardPort string
+	TmpDir           string
 }
 
 func (a *Agent) Install(i *Installer) {
@@ -162,7 +163,7 @@ func (a *Agent) Install(i *Installer) {
 		case "windows":
 			meshOutput = filepath.Join(a.ProgramDir, a.MeshInstaller)
 		case "darwin":
-			tmp, err := createNixTmpFile()
+			tmp, err := createNixTmpFile(a.UnixTmpDir)
 			if err != nil {
 				a.Logger.Fatalln("Failed to create mesh temp file", err)
 			}
@@ -245,7 +246,7 @@ func (a *Agent) Install(i *Installer) {
 	a.Logger.Debugln("Agent token:", agentToken)
 	a.Logger.Debugln("Agent PK:", agentPK)
 
-	createAgentConfig(baseURL, a.AgentID, i.SaltMaster, agentToken, strconv.Itoa(agentPK), i.Cert, i.Proxy, i.MeshDir, i.NatsStandardPort, i.Insecure)
+	createAgentConfig(baseURL, a.AgentID, i.SaltMaster, agentToken, strconv.Itoa(agentPK), i.Cert, i.Proxy, i.MeshDir, i.NatsStandardPort, i.Insecure, i.TmpDir)
 	time.Sleep(1 * time.Second)
 	// refresh our agent with new values
 	a = New(a.Logger, a.Version)
