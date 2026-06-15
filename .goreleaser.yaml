@@ -1,0 +1,66 @@
+# GoReleaser config — https://goreleaser.com
+# Builds the agent binaries and publishes them to a GitHub Release.
+version: 2
+
+project_name: rmmagent
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: rmmagent
+    binary: rmmagent
+    main: .
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    # main.version is injected from the git tag (leading "v" stripped),
+    # so the binary reports the same version as the release.
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos:
+      - linux
+      - windows
+    goarch:
+      - "386"
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "5"
+      - "6"
+      - "7"
+    ignore:
+      # Windows: only 386 and amd64 (no arm/arm64)
+      - goos: windows
+        goarch: arm
+      - goos: windows
+        goarch: arm64
+
+archives:
+  # Upload bare binaries (not tar.gz/zip) to match the existing release layout.
+  # Names: rmmagent-linux-amd64, rmmagent-linux-armv7, rmmagent-windows-386.exe, ...
+  # (.exe is appended automatically for Windows)
+  - id: rmmagent
+    formats: [binary]
+    name_template: "rmmagent-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  # If you created the release/tag from the browser, its notes are kept and
+  # the binaries + checksums are just added to it.
+  mode: keep-existing
